@@ -40,13 +40,11 @@ Jota Studio.
    ```
    npm run db:deploy
    ```
-4. Se o papel usado em `DATABASE_URL` for diferente daquele que rodou esta migration,
-   rode manualmente uma vez (veja o aviso que a migration deixa):
-   ```sql
-   GRANT kardo_client TO <papel_de_producao>;
-   ```
-5. Crie os modelos de checklist padrão: `npm run db:seed`.
-6. Rode o servidor: `npm run dev` (porta 3001, pra não bater com o Jota Studio em dev).
+4. Crie os modelos de checklist padrão: `npm run db:seed`.
+5. Rode o servidor: `npm run dev` (porta 3001, pra não bater com o Jota Studio em dev).
+
+A migration do KardoJota é idempotente (segura de rodar de novo) — se `db:deploy` falhar
+no meio por qualquer motivo, corrija e rode de novo sem medo de erro de "já existe".
 
 Se por acaso este for o primeiro app a rodar contra um banco vazio (ambiente de teste
 isolado), pule o passo 2 — a migration de baseline cria tudo do zero normalmente.
@@ -54,17 +52,24 @@ isolado), pule o passo 2 — a migration de baseline cria tudo do zero normalmen
 ## RLS — como as permissões do cliente são aplicadas
 
 Não existe projeto Supabase aqui — "RLS" é a Row Level Security nativa do Postgres,
-criada na migration `20261010040100_kardojota_foundation`:
+criada na migration `20261010040100_kardojota_foundation`. E como bancos gerenciados
+(Prisma Postgres, Neon, RDS etc.) normalmente **não deixam criar uma role nova**, tudo
+roda com a única role que você já tem — não precisa de nenhum `GRANT`/`CREATE ROLE`
+manual.
 
-- A conexão padrão da aplicação (dona das tabelas) sempre ignora RLS — é assim que a área
-  da admin funciona, sem fricção, com acesso total.
+- Toda tabela sensível tem `FORCE ROW LEVEL SECURITY`, e cada política segue a mesma
+  regra: se a variável de sessão `app.actor_role` não for exatamente `'client'` (ou seja:
+  nunca foi setada — caso do Jota Studio e da área da admin do Kardo — ou foi setada como
+  `'admin'`), libera tudo, igual ao comportamento de sempre. O Jota Studio nem precisa
+  saber que isso existe.
 - Toda ação do **cliente** passa por `withClientContext()` (`src/lib/db-context.ts`), que
-  abre uma transação, troca para o papel `kardo_client` (sem `BYPASSRLS`) e define
-  `app.client_id` / `app.contact_id`. A partir daí as políticas no banco garantem, por
-  exemplo: só vê cards com `visibleToClient = true`; só move um card que está numa etapa
-  "com o cliente", e só pra outra etapa do mesmo cliente; só comenta como si mesmo; nunca
-  vê a nota interna, nem clientes de outra marca — mesmo que um bug na interface tentasse
-  pedir isso.
+  abre uma transação e define `app.actor_role = 'client'` + `app.client_id` +
+  `app.contact_id` (via `set_config(..., true)`, local à transação). A partir daí as
+  políticas no banco garantem, por exemplo: só vê cards com `visibleToClient = true`; só
+  move um card que está numa etapa "com o cliente", e só pra outra etapa do mesmo cliente
+  (um trigger em `ContentCard` garante que nenhuma outra coluna muda nessa mesma
+  instrução); só comenta como si mesmo; nunca vê a nota interna, nem clientes de outra
+  marca — mesmo que um bug na interface tentasse pedir isso.
 - `requireClient()`/`assertClient()` (`src/lib/authz.ts`) também re-checam
   `ClientContact.active` a cada requisição pela conexão privilegiada: suspender o acesso
   vale imediatamente, mesmo pra quem já tinha uma sessão aberta.
