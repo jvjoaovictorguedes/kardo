@@ -1,0 +1,558 @@
+// Prisma schema do KardoJota — mesmo banco Postgres do Jota Studio (repositório "basio").
+//
+// As tabelas abaixo marcadas "[compartilhado]" já existem no banco, criadas pelas
+// migrations do Jota Studio — este arquivo as declara de novo apenas para o Prisma
+// Client deste app ter acesso tipado a elas. A migration `0_baseline_jota_studio`
+// apenas registra esse estado (não recria nada). Nunca remova ou renomeie uma coluna
+// "[compartilhado]" por aqui: só o Jota Studio é dono dessa parte do schema.
+//
+// As tabelas/colunas marcadas "[KardoJota]" são deste app: adicionadas via migration
+// aditiva própria, sem tocar no que o Jota Studio já usa.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Enums [compartilhado] ----------
+
+enum ClientStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum StageAwaiting {
+  STUDIO
+  CLIENT
+}
+
+enum CardPriority {
+  BAIXA
+  MEDIA
+  ALTA
+}
+
+enum CommentAuthorType {
+  STAFF
+  CLIENT
+}
+
+enum ApprovalStatus {
+  PENDENTE
+  APROVADO
+  AJUSTES
+}
+
+enum IdeaSource {
+  STUDIO
+  CLIENT_REQUEST
+}
+
+enum IdeaStatus {
+  PENDING
+  CONVERTED
+}
+
+enum TaskStatus {
+  PENDENTE
+  CONCLUIDA
+}
+
+enum StrategyKey {
+  POSICIONAMENTO
+  PERSONA
+  TOM_DE_VOZ
+  PILARES
+}
+
+enum CustomPageType {
+  TEXT
+  LIST
+  FOLDER
+}
+
+// ---------- Enums [KardoJota] ----------
+
+enum FileStorageProvider {
+  POSTGRES
+  GOOGLE_DRIVE
+}
+
+enum MaterialRequestStatus {
+  OPEN
+  DONE
+}
+
+// ---------- Identidade [compartilhado] ----------
+
+model StaffUser {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  avatarFileId String?
+  avatarFile   File?    @relation("StaffAvatar", fields: [avatarFileId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdClients Client[]           @relation("ClientCreatedBy")
+  cardsCreated   ContentCard[]      @relation("CardCreatedBy")
+  cardComments   CardComment[]
+  stageChanges   CardStageHistory[] @relation("StageChangedByStaff")
+  ideasCreated   IdeaBank[]
+  uploadedFiles  File[]             @relation("FileUploadedBy")
+  internalTasks  InternalTask[]
+
+  // [KardoJota]
+  decidedApprovals  CardApproval[]    @relation("ApprovalDecidedByStaff")
+  materialRequests  MaterialRequest[] @relation("MaterialRequestCreatedBy")
+}
+
+model ClientContact {
+  id         String   @id @default(uuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name       String
+  email      String
+  phone      String?
+  authUserId String?
+  createdAt  DateTime @default(now())
+
+  // [KardoJota] acesso ao KardoJota: liberado por convite, suspenso a qualquer momento.
+  active       Boolean              @default(true)
+  loginTokens  ClientLoginToken[]
+  comments     CardComment[]        @relation("CommentAuthorContact")
+  stageChanges CardStageHistory[]   @relation("StageChangedByContact")
+  approvals    CardApproval[]       @relation("ApprovalDecidedByContact")
+  uploadedFiles File[]              @relation("FileUploadedByContact")
+  materialFiles MaterialFile[]
+  ideaRequests  IdeaBank[]          @relation("IdeaRequestedByContact")
+}
+
+// ---------- Clientes [compartilhado] ----------
+
+model Client {
+  id           String       @id @default(uuid())
+  name         String
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  service      String?
+  status       ClientStatus @default(ACTIVE)
+  createdById  String?
+  createdBy    StaffUser?   @relation("ClientCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  contacts        ClientContact[]
+  stages          PipelineStage[]
+  pillars         ContentPillar[]
+  cards           ContentCard[]
+  ideas           IdeaBank[]
+  strategyPages   StrategyPage[]
+  documentFolders DocumentFolder[]
+  documents       Document[]
+  notes           Note[]
+  internalTasks   InternalTask[]
+  customPages     CustomPage[]
+
+  // [KardoJota]
+  materialRequests MaterialRequest[]
+}
+
+// ---------- Produção (KardoJota) [compartilhado — só o KardoJota usa estas telas] ----------
+
+model PipelineStage {
+  id        String        @id @default(uuid())
+  clientId  String
+  client    Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name      String
+  position  Int
+  color     String?
+  awaiting  StageAwaiting @default(STUDIO)
+  isFinal   Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  cards            ContentCard[]
+  stageHistoryFrom CardStageHistory[] @relation("FromStage")
+  stageHistoryTo   CardStageHistory[] @relation("ToStage")
+
+  @@index([clientId, position])
+}
+
+model ContentPillar {
+  id          String   @id @default(uuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name        String
+  color       String?
+  description String?
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  cards ContentCard[]
+  ideas IdeaBank[]
+}
+
+model ContentCard {
+  id              String         @id @default(uuid())
+  clientId        String
+  client          Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  stageId         String
+  stage           PipelineStage  @relation(fields: [stageId], references: [id])
+  title           String
+  format          String?
+  channel         String?
+  pillarId        String?
+  pillar          ContentPillar? @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  dueDate         DateTime?
+  priority        CardPriority   @default(MEDIA)
+  script          String?
+  caption         String?
+  internalNotes   String?
+  visibleToClient Boolean        @default(false)
+  position        Float          @default(0)
+  createdById     String?
+  createdBy       StaffUser?     @relation("CardCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // [KardoJota] prazo de quem está com a vez na etapa atual (distinto da data de publicação)
+  turnDueAt DateTime?
+
+  attachments     CardAttachment[]
+  comments        CardComment[]
+  approvals       CardApproval[]
+  stageHistory    CardStageHistory[]
+  ideaOrigin      IdeaBank?          @relation("IdeaConverted")
+  checklistItems  CardChecklistItem[]
+
+  @@index([clientId, stageId])
+  @@index([clientId, dueDate])
+}
+
+model CardAttachment {
+  id        String      @id @default(uuid())
+  cardId    String
+  card      ContentCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  fileId    String
+  file      File        @relation("CardAttachmentFile", fields: [fileId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+}
+
+model CardComment {
+  id         String            @id @default(uuid())
+  cardId     String
+  card       ContentCard       @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  authorType CommentAuthorType @default(STAFF)
+  authorId   String?
+  author     StaffUser?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorName String?
+  body       String
+  createdAt  DateTime          @default(now())
+
+  // [KardoJota] autor quando authorType = CLIENT (authorId só cobre StaffUser)
+  authorContactId String?
+  authorContact   ClientContact? @relation("CommentAuthorContact", fields: [authorContactId], references: [id], onDelete: SetNull)
+}
+
+model CardApproval {
+  id          String         @id @default(uuid())
+  cardId      String
+  card        ContentCard    @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  status      ApprovalStatus @default(PENDENTE)
+  requestedAt DateTime       @default(now())
+  decidedAt   DateTime?
+  notes       String?
+
+  // [KardoJota] autor da decisão (aprovar / pedir ajuste) — um dos dois, nunca ambos
+  decidedByStaffId   String?
+  decidedByStaff     StaffUser?     @relation("ApprovalDecidedByStaff", fields: [decidedByStaffId], references: [id], onDelete: SetNull)
+  decidedByContactId String?
+  decidedByContact   ClientContact? @relation("ApprovalDecidedByContact", fields: [decidedByContactId], references: [id], onDelete: SetNull)
+}
+
+model CardStageHistory {
+  id          String         @id @default(uuid())
+  cardId      String
+  card        ContentCard    @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  fromStageId String?
+  fromStage   PipelineStage? @relation("FromStage", fields: [fromStageId], references: [id], onDelete: SetNull)
+  toStageId   String
+  toStage     PipelineStage  @relation("ToStage", fields: [toStageId], references: [id], onDelete: Cascade)
+  changedById String?
+  changedBy   StaffUser?     @relation("StageChangedByStaff", fields: [changedById], references: [id], onDelete: SetNull)
+  note        String?
+  createdAt   DateTime       @default(now())
+
+  // [KardoJota] autor quando quem moveu foi o cliente (aprovar / pedir ajuste)
+  changedByContactId String?
+  changedByContact   ClientContact? @relation("StageChangedByContact", fields: [changedByContactId], references: [id], onDelete: SetNull)
+}
+
+// ---------- Banco de ideias / pedidos de material [compartilhado] ----------
+
+model IdeaBank {
+  id              String         @id @default(uuid())
+  clientId        String
+  client          Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  format          String?
+  pillarId        String?
+  pillar          ContentPillar? @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  source          IdeaSource     @default(STUDIO)
+  status          IdeaStatus     @default(PENDING)
+  convertedCardId String?        @unique
+  convertedCard   ContentCard?   @relation("IdeaConverted", fields: [convertedCardId], references: [id], onDelete: SetNull)
+  createdById     String?
+  createdBy       StaffUser?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime       @default(now())
+
+  // [KardoJota] quando source = CLIENT_REQUEST, quem enviou o formulário
+  requestedByContactId String?
+  requestedByContact   ClientContact? @relation("IdeaRequestedByContact", fields: [requestedByContactId], references: [id], onDelete: SetNull)
+}
+
+// ---------- Estratégia [compartilhado] ----------
+
+model StrategyPage {
+  id        String      @id @default(uuid())
+  clientId  String
+  client    Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  key       StrategyKey
+  content   String      @default("")
+  updatedAt DateTime    @updatedAt
+
+  @@unique([clientId, key])
+}
+
+// ---------- Documentos e contratos [compartilhado] ----------
+
+model DocumentFolder {
+  id             String           @id @default(uuid())
+  clientId       String
+  client         Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  parentFolderId String?
+  parentFolder   DocumentFolder?  @relation("FolderHierarchy", fields: [parentFolderId], references: [id], onDelete: Cascade)
+  childFolders   DocumentFolder[] @relation("FolderHierarchy")
+  name           String
+  createdAt      DateTime         @default(now())
+
+  documents Document[]
+}
+
+model Document {
+  id                String          @id @default(uuid())
+  clientId          String
+  client            Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  folderId          String?
+  folder            DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  fileId            String
+  file              File            @relation("DocumentFile", fields: [fileId], references: [id], onDelete: Cascade)
+  name              String
+  isContract        Boolean         @default(false)
+  contractExpiresAt DateTime?
+  uploadedById      String?
+  createdAt         DateTime        @default(now())
+}
+
+// ---------- Anotações [compartilhado] ----------
+
+model Note {
+  id        String   @id @default(uuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title     String?
+  content   String
+  noteDate  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attachments NoteAttachment[]
+}
+
+model NoteAttachment {
+  id        String   @id @default(uuid())
+  noteId    String
+  note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  fileId    String
+  file      File     @relation("NoteAttachmentFile", fields: [fileId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+// ---------- Tarefas internas [compartilhado] ----------
+
+model InternalTask {
+  id          String       @id @default(uuid())
+  title       String
+  description String?
+  dueDate     DateTime?
+  priority    CardPriority @default(MEDIA)
+  status      TaskStatus   @default(PENDENTE)
+  clientId    String?
+  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdById String?
+  createdBy   StaffUser?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime     @default(now())
+  completedAt DateTime?
+}
+
+// ---------- Páginas personalizadas [compartilhado] ----------
+
+model CustomPage {
+  id        String         @id @default(uuid())
+  clientId  String?
+  client    Client?        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type      CustomPageType
+  title     String
+  position  Int            @default(0)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  // [KardoJota] a admin decide, por página, se o cliente vê ou não
+  visibleToClient Boolean @default(false)
+
+  textContent CustomPageTextContent?
+  listItems   CustomPageListItem[]
+  files       CustomPageFile[]
+
+  @@index([clientId, position])
+}
+
+model CustomPageTextContent {
+  pageId  String     @id
+  page    CustomPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  content String     @default("")
+}
+
+model CustomPageListItem {
+  id        String     @id @default(uuid())
+  pageId    String
+  page      CustomPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  title     String
+  done      Boolean    @default(false)
+  position  Int        @default(0)
+  createdAt DateTime   @default(now())
+}
+
+model CustomPageFile {
+  id        String     @id @default(uuid())
+  pageId    String
+  page      CustomPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  fileId    String
+  file      File       @relation("CustomPageFile", fields: [fileId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+}
+
+// ---------- Armazenamento de arquivos [compartilhado] ----------
+// Pequenos: bytea no próprio Postgres. Grandes (foto/vídeo de cliente): Google Drive,
+// com só o link/id salvo aqui — ver FileStorageProvider.
+
+model File {
+  id           String              @id @default(uuid())
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  data         Bytes?
+  uploadedById String?
+  uploadedBy   StaffUser?          @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime            @default(now())
+
+  // [KardoJota]
+  storageProvider     FileStorageProvider @default(POSTGRES)
+  externalId          String?
+  externalUrl         String?
+  uploadedByContactId String?
+  uploadedByContact    ClientContact?     @relation("FileUploadedByContact", fields: [uploadedByContactId], references: [id], onDelete: SetNull)
+
+  cardAttachments CardAttachment[] @relation("CardAttachmentFile")
+  documents       Document[]       @relation("DocumentFile")
+  noteAttachments NoteAttachment[] @relation("NoteAttachmentFile")
+  customPageFiles CustomPageFile[] @relation("CustomPageFile")
+  staffAvatars    StaffUser[]      @relation("StaffAvatar")
+  materialFiles   MaterialFile[]
+}
+
+// ===================== A partir daqui: tabelas novas, só do KardoJota =====================
+
+// Convite / acesso do cliente: link mágico por e-mail, sem cadastro público.
+// A admin cria o ClientContact e dispara um convite; cada convite/login gera um token
+// de uso único e curto prazo. Suspender acesso = ClientContact.active = false.
+model ClientLoginToken {
+  id         String        @id @default(uuid())
+  contactId  String
+  contact    ClientContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tokenHash  String        @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime      @default(now())
+
+  @@index([contactId])
+}
+
+// Pedido de material: a admin pede fotos/vídeos/documentos com descrição e prazo;
+// o cliente envia os arquivos dentro daquele pedido (MaterialFile).
+model MaterialRequest {
+  id          String                @id @default(uuid())
+  clientId    String
+  client      Client                @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  dueDate     DateTime?
+  status      MaterialRequestStatus @default(OPEN)
+  createdById String?
+  createdBy   StaffUser?            @relation("MaterialRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime              @default(now())
+
+  files MaterialFile[]
+
+  @@index([clientId, createdAt])
+}
+
+model MaterialFile {
+  id                   String           @id @default(uuid())
+  requestId            String
+  request              MaterialRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fileId               String
+  file                 File             @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  uploadedByContactId  String?
+  uploadedByContact    ClientContact?   @relation(fields: [uploadedByContactId], references: [id], onDelete: SetNull)
+  createdAt            DateTime         @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+// Checklist padrão por formato de conteúdo (reels, carrossel, story, post estático...).
+// A admin edita os modelos; ao criar um card com aquele formato, os itens são copiados
+// para CardChecklistItem (cada card tem sua própria cópia, editável sem afetar o modelo).
+model ChecklistTemplate {
+  id     String @id @default(uuid())
+  format String @unique
+  label  String
+
+  items ChecklistTemplateItem[]
+}
+
+model ChecklistTemplateItem {
+  id         String            @id @default(uuid())
+  templateId String
+  template   ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  label      String
+  position   Int               @default(0)
+}
+
+model CardChecklistItem {
+  id       String      @id @default(uuid())
+  cardId   String
+  card     ContentCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  label    String
+  done     Boolean     @default(false)
+  position Int         @default(0)
+
+  @@index([cardId, position])
+}

@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f5f7;
+  --surface: #ffffff;
+  --foreground: #172b4d;
+  --muted: #5e6c84;
+  --border: #dfe1e6;
+  --primary: #3b6fd6;
+  --primary-hover: #2f5bc0;
+  --success: #36b37e;
+  --warning: #ff8b00;
+  --danger: #c9372c;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+/* Botões grandes o bastante pro toque no celular (alvo mínimo ~44px) */
+.tap-target {
+  min-height: 44px;
+}
