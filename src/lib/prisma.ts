@@ -1,11 +1,12 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
+import { getDatabaseUrl } from "@/lib/env";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg({ connectionString: getDatabaseUrl() });
 
 // Conexão "dona das tabelas": sempre ignora RLS (comportamento padrão do Postgres pro
 // owner). Só é usada depois que src/lib/authz.ts confirmou que quem está pedindo é a

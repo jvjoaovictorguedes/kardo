@@ -3,12 +3,23 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
+// A integração Prisma Postgres da Vercel às vezes grava as variáveis com um prefixo
+// (ex.: "kardo_DATABASE_URL"). Mesma lista de candidatos de src/lib/env.ts, duplicada
+// aqui porque este arquivo roda fora do bundle do Next.js (CLI do Prisma).
+const DATABASE_URL =
+  process.env["DATABASE_URL"] ??
+  process.env["POSTGRES_URL"] ??
+  process.env["PRISMA_DATABASE_URL"] ??
+  process.env["kardo_DATABASE_URL"] ??
+  process.env["kardo_POSTGRES_URL"] ??
+  process.env["kardo_PRISMA_DATABASE_URL"];
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    url: DATABASE_URL,
   },
 });
